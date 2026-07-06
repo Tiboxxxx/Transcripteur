@@ -46,6 +46,7 @@ def load_config() -> dict:
         return {}
 
 GEMINI_MODEL = "models/gemini-flash-latest"
+GEMINI_FALLBACK_MODEL = "models/gemini-2.5-flash"
 
 _gemini_client = None
 _gemini_stats = {
@@ -219,10 +220,33 @@ Important rules:
 Transcript:
 {text}"""
 
-        response = _gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt
-        )
+        response = None
+        model_used = None
+        last_error = None
+
+        for model in (GEMINI_MODEL, GEMINI_FALLBACK_MODEL):
+            for attempt in range(1, 3):
+                try:
+                    response = _gemini_client.models.generate_content(
+                        model=model,
+                        contents=prompt
+                    )
+                    model_used = model
+                    break
+                except Exception as error:
+                    if "503" not in str(error) and "UNAVAILABLE" not in str(error):
+                        raise
+                    last_error = error
+                    if attempt < 2:
+                        print(f"[WARN] {model} surchargé (503), nouvel essai dans 15 s...")
+                        time.sleep(15)
+            if response is not None:
+                break
+            if model == GEMINI_MODEL:
+                print(f"[WARN] Bascule sur le modèle de secours : {GEMINI_FALLBACK_MODEL}")
+
+        if response is None:
+            raise last_error
 
         try:
             json_str = response.text
@@ -232,12 +256,16 @@ Transcript:
                 json_str = json_str.split("```")[1].split("```")[0]
 
             enrichment = json.loads(json_str.strip())
+            enrichment["_model_used"] = model_used.removeprefix("models/")
 
-            # Estimer les tokens utilisés (approximatif)
-            # ~4 tokens par mot en moyenne
-            prompt_tokens = len(prompt.split()) * 1.3
-            response_tokens = len(json_str.split()) * 1.3
-            total_tokens_used = int(prompt_tokens + response_tokens)
+            usage = getattr(response, "usage_metadata", None)
+            if usage and getattr(usage, "total_token_count", None):
+                total_tokens_used = usage.total_token_count
+            else:
+                # Estimation de secours : ~1,3 token par mot
+                total_tokens_used = int(
+                    (len(prompt.split()) + len(json_str.split())) * 1.3
+                )
 
             check_quota_warning(total_tokens_used)
 
@@ -659,7 +687,10 @@ def export_markdown(
                 file.write(f"sentiment: {gemini_enrichment['sentiment']}\n")
             if gemini_enrichment.get("quality_score"):
                 file.write(f"quality_score: {gemini_enrichment['quality_score']}\n")
-            file.write(f"enriched_by: {GEMINI_MODEL.removeprefix('models/')}\n")
+            file.write(
+                f"enriched_by: "
+                f"{gemini_enrichment.get('_model_used', GEMINI_MODEL.removeprefix('models/'))}\n"
+            )
 
         file.write("---\n\n")
 
@@ -1054,6 +1085,65 @@ def command_transcribe(args) -> None:
         )
 
 
+def command_reenrich(args) -> None:
+    config = load_config()
+    name = args.name
+
+    json_file = JSON_DIR / f"{name}.json"
+    if not json_file.exists():
+        raise FileNotFoundError(f"Export JSON introuvable : {json_file}")
+
+    payload = json.loads(json_file.read_text(encoding="utf-8"))
+    segments = payload["segments"]
+    language = payload.get("language_requested", "fr")
+
+    if not init_gemini(config):
+        raise RuntimeError("Gemini indisponible (clé API ou paquet manquant).")
+
+    print(f"[INFO] Ré-enrichissement de « {name} » ({len(segments)} segments)...")
+    full_text = " ".join(s["text"] for s in segments)
+    enrichment = enrich_with_gemini(full_text, language=language)
+
+    if not enrichment:
+        raise RuntimeError("Échec de l'enrichissement Gemini.")
+
+    markdown_file = MARKDOWN_DIR / f"{name}.md"
+    export_markdown(
+        output_file=markdown_file,
+        name=name,
+        audio_file=Path(payload.get("source_audio", f"{name}.wav")),
+        model_size=payload.get("model", "small"),
+        engine=payload.get("engine", ""),
+        language=language,
+        detected_language=payload.get("language_detected", language),
+        language_probability=float(payload.get("language_probability", 0.0)),
+        segments=segments,
+        gemini_enrichment=enrichment
+    )
+    print(f"[OK] Markdown régénéré : {markdown_file}")
+
+    title = args.title
+    if not title and enrichment.get("title"):
+        title = enrichment["title"]
+        print(f"[OK] Titre proposé par Gemini : {title}")
+
+    enrich_markdown_for_obsidian(
+        markdown_file=markdown_file,
+        title=title,
+        domain=args.domain
+    )
+
+    obsidian_dir = args.obsidian_dir or config.get("obsidian_dir")
+    obsidian_subdir = args.obsidian_subdir or config.get("obsidian_subdir")
+
+    if obsidian_dir:
+        export_to_obsidian(
+            markdown_file=markdown_file,
+            obsidian_dir=obsidian_dir,
+            obsidian_subdir=obsidian_subdir
+        )
+
+
 def command_run(args) -> None:
     config = load_config()
 
@@ -1211,6 +1301,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sous-dossier dans le vault Obsidian, exemple : 00_INBOX."
     )
     parser_transcribe.set_defaults(func=command_transcribe)
+
+    parser_reenrich = subparsers.add_parser(
+        "reenrich",
+        help="Ré-enrichir une note existante avec Gemini (depuis l'export JSON)."
+    )
+    parser_reenrich.add_argument(
+        "--name",
+        required=True,
+        help="Nom de la note existante (sans extension)."
+    )
+    parser_reenrich.add_argument(
+        "--title",
+        default=None,
+        help="Titre de la note (sinon celui proposé par Gemini)."
+    )
+    parser_reenrich.add_argument(
+        "--domain",
+        default=None,
+        help="Domaine du contenu."
+    )
+    parser_reenrich.add_argument(
+        "--obsidian-dir",
+        default=None,
+        help="Chemin vers le vault Obsidian ou un dossier d'export."
+    )
+    parser_reenrich.add_argument(
+        "--obsidian-subdir",
+        default=None,
+        help="Sous-dossier dans le vault Obsidian."
+    )
+    parser_reenrich.set_defaults(func=command_reenrich)
 
     parser_run = subparsers.add_parser(
         "run",

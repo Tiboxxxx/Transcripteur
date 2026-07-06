@@ -20,6 +20,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from urllib.parse import quote
 
 from app import (
+    CAPTURE_DIR,
     CONFIG_FILE,
     JSON_DIR,
     MARKDOWN_DIR,
@@ -121,6 +122,24 @@ def _recent_notes(config: dict, limit: int = 8) -> list[dict]:
     return notes
 
 
+def _captures(limit: int = 8) -> list[dict]:
+    captures = []
+    for wav_file in sorted(
+        CAPTURE_DIR.glob("*.wav"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True
+    )[:limit]:
+        size = wav_file.stat().st_size
+        captures.append({
+            "name": wav_file.stem,
+            "modified": wav_file.stat().st_mtime,
+            # WAV PCM 16 bits mono 16 kHz → 32 000 octets/seconde
+            "duration_seconds": max((size - 44) // 32000, 0),
+            "transcribed": (JSON_DIR / f"{wav_file.stem}.json").exists(),
+        })
+    return captures
+
+
 def _quota() -> dict:
     stats = load_gemini_stats()
 
@@ -166,6 +185,7 @@ def status():
 
     payload["quota"] = _quota()
     payload["notes"] = _recent_notes(config)
+    payload["captures"] = _captures()
     payload["config"] = {
         "model": config.get("default_model", "small"),
         "language": config.get("default_language", "fr"),
@@ -176,23 +196,11 @@ def status():
     return jsonify(payload)
 
 
-@app.post("/api/record/start")
-def record_start():
-    data = request.get_json(silent=True) or {}
-
+def _spawn_job(command: list[str], phase: str):
+    """Lance app.py en sous-processus si aucun travail n'est en cours."""
     with _lock:
         if _job["process"] is not None:
-            return jsonify({"error": "Un enregistrement est déjà en cours"}), 409
-
-        command = [PYTHON, str(BASE_DIR / "app.py"), "run"]
-        if data.get("name"):
-            command += ["--name", data["name"]]
-        if data.get("title"):
-            command += ["--title", data["title"]]
-        if data.get("domain"):
-            command += ["--domain", data["domain"]]
-        if data.get("delete_audio"):
-            command += ["--delete-audio"]
+            return None
 
         process = subprocess.Popen(
             command,
@@ -204,9 +212,9 @@ def record_start():
 
         _job.update({
             "process": process,
-            "phase": "recording",
+            "phase": phase,
             "started_at": time.time(),
-            "stopped_at": None,
+            "stopped_at": None if phase == "recording" else time.time(),
             "silence_warning": False,
             "note": None,
             "title": None,
@@ -214,6 +222,54 @@ def record_start():
         _job["log"].clear()
 
     threading.Thread(target=_reader_thread, args=(process,), daemon=True).start()
+    return process
+
+
+@app.post("/api/record/start")
+def record_start():
+    data = request.get_json(silent=True) or {}
+
+    command = [PYTHON, str(BASE_DIR / "app.py"), "run"]
+    if data.get("name"):
+        command += ["--name", data["name"]]
+    if data.get("title"):
+        command += ["--title", data["title"]]
+    if data.get("domain"):
+        command += ["--domain", data["domain"]]
+    if data.get("delete_audio"):
+        command += ["--delete-audio"]
+
+    if _spawn_job(command, "recording") is None:
+        return jsonify({"error": "Un travail est déjà en cours"}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/reenrich")
+def reenrich():
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "")
+
+    if not (JSON_DIR / f"{name}.json").exists() or "/" in name:
+        return jsonify({"error": f"Note inconnue : {name}"}), 404
+
+    command = [PYTHON, str(BASE_DIR / "app.py"), "reenrich", "--name", name]
+    if _spawn_job(command, "processing") is None:
+        return jsonify({"error": "Un travail est déjà en cours"}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/transcribe")
+def transcribe():
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "")
+
+    wav_file = CAPTURE_DIR / f"{name}.wav"
+    if not wav_file.exists() or "/" in name:
+        return jsonify({"error": f"Capture inconnue : {name}"}), 404
+
+    command = [PYTHON, str(BASE_DIR / "app.py"), "transcribe", "--file", str(wav_file)]
+    if _spawn_job(command, "processing") is None:
+        return jsonify({"error": "Un travail est déjà en cours"}), 409
     return jsonify({"ok": True})
 
 

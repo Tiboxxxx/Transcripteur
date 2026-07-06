@@ -104,6 +104,12 @@
   tr:last-child td { border-bottom: none; }
   a.obsidian-link { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
   a.obsidian-link:hover { text-decoration: underline; }
+  button.mini {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-secondary); font-size: 0.78rem; padding: 3px 10px; cursor: pointer;
+  }
+  button.mini:hover { border-color: var(--accent); color: var(--accent); }
+  button.mini:disabled { opacity: 0.4; cursor: default; }
 
   /* --- Réglages + journal --- */
   .settings { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; color: var(--text-secondary); flex-wrap: wrap; }
@@ -160,6 +166,14 @@
     <table>
       <thead><tr><th>Note</th><th>Durée audio</th><th>Modifiée</th><th></th></tr></thead>
       <tbody id="notesBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Captures audio <span class="pill" id="capturesCount"></span></h2>
+    <table>
+      <thead><tr><th>Fichier</th><th>Durée</th><th>Enregistré</th><th>État</th><th></th></tr></thead>
+      <tbody id="capturesBody"></tbody>
     </table>
   </div>
 
@@ -252,9 +266,37 @@ async function refresh() {
       a.className = "obsidian-link";
       tr.querySelector(".open").appendChild(a);
     }
+    const btn = document.createElement("button");
+    btn.className = "mini";
+    btn.textContent = "✨ Ré-enrichir";
+    btn.disabled = phase === "recording" || phase === "processing";
+    btn.onclick = () => action("/api/reenrich", note.name);
+    tr.querySelector(".open").appendChild(document.createTextNode(" "));
+    tr.querySelector(".open").appendChild(btn);
     body.appendChild(tr);
   }
   document.getElementById("notesCount").textContent = "(" + data.notes.length + ")";
+
+  const capBody = document.getElementById("capturesBody");
+  capBody.innerHTML = "";
+  for (const cap of data.captures) {
+    const tr = document.createElement("tr");
+    const d = new Date(cap.modified * 1000);
+    tr.innerHTML = "<td class='name'></td><td>" + fmt(cap.duration_seconds) +
+                   "</td><td>" + d.toLocaleDateString("fr-FR") + " " +
+                   d.toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}) +
+                   "</td><td>" + (cap.transcribed ? "transcrit ✓" : "non transcrit") +
+                   "</td><td class='act'></td>";
+    tr.querySelector(".name").textContent = cap.name;
+    const btn = document.createElement("button");
+    btn.className = "mini";
+    btn.textContent = "📝 Transcrire";
+    btn.disabled = phase === "recording" || phase === "processing";
+    btn.onclick = () => action("/api/transcribe", cap.name);
+    tr.querySelector(".act").appendChild(btn);
+    capBody.appendChild(tr);
+  }
+  document.getElementById("capturesCount").textContent = "(" + data.captures.length + ")";
 
   const c = data.config;
   document.getElementById("configLine").textContent =
@@ -264,6 +306,18 @@ async function refresh() {
   document.getElementById("modelInfo").textContent = c.enrichment ? "gemini-flash-latest" : "désactivé";
 
   document.getElementById("log").textContent = data.log.length ? data.log.join("\n") : "—";
+}
+
+async function action(url, name) {
+  const r = await fetch(url, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ name })
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    alert(err.error || "Action impossible");
+  }
+  refresh();
 }
 
 async function toggleRecord() {
