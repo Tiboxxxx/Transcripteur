@@ -231,12 +231,9 @@ async function refresh() {
   } else if (phase === "done" && data.note) {
     banner.className = "banner ok";
     banner.textContent = "✅ " + (data.title ? "« " + data.title + " »" : "Note créée") + " ";
-    if (data.note_url) {
-      const a = document.createElement("a");
-      a.href = data.note_url;
-      a.textContent = "Ouvrir dans Obsidian ↗";
-      a.className = "obsidian-link";
-      banner.appendChild(a);
+    if (data.note_name) {
+      addMini(banner, "Ouvrir dans Obsidian ↗", false,
+              () => action("/api/note/open", data.note_name));
     } else {
       banner.appendChild(document.createTextNode("— " + data.note));
     }
@@ -268,15 +265,9 @@ async function refresh() {
                    d.toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}) +
                    "</td><td class='open'></td>";
     tr.querySelector(".name").textContent = note.name;
-    if (note.obsidian_url) {
-      const a = document.createElement("a");
-      a.href = note.obsidian_url;
-      a.textContent = "Ouvrir ↗";
-      a.className = "obsidian-link";
-      tr.querySelector(".open").appendChild(a);
-    }
     const cell = tr.querySelector(".open");
     const busy = phase === "recording" || phase === "processing";
+    addMini(cell, "Ouvrir ↗", false, () => action("/api/note/open", note.name));
     addMini(cell, "✨ Ré-enrichir", busy, () => action("/api/reenrich", note.name));
     addMini(cell, "🗑", busy, () => {
       if (confirm("Supprimer définitivement la note « " + note.name +

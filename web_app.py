@@ -97,6 +97,12 @@ def _find_vault_note(note_name: str, config: dict) -> Path | None:
     for candidate in sorted(base.glob(f"[0-9][0-9][0-9][0-9]-[0-9][0-9]/{note_name}.md"), reverse=True):
         return candidate
 
+    # N'importe où ailleurs dans le vault (note reclassée à la main)
+    vault = Path(obsidian_dir).expanduser()
+    for candidate in vault.rglob(f"{note_name}.md"):
+        if ".obsidian" not in candidate.parts and ".trash" not in candidate.parts:
+            return candidate
+
     return None
 
 
@@ -194,6 +200,7 @@ def status():
             "silence_warning": _job["silence_warning"],
             "title": _job["title"],
             "note": _job["note"],
+            "note_name": Path(_job["note"]).stem if _job["note"] else None,
             "note_url": (
                 _obsidian_url(Path(_job["note"]).stem, config)
                 if _job["note"] else None
@@ -300,6 +307,40 @@ def record_stop():
         # SIGINT = équivalent CTRL+C : arrêt propre puis transcription
         process.send_signal(signal.SIGINT)
     return jsonify({"ok": True})
+
+
+@app.post("/api/note/open")
+def note_open():
+    """Ouvre la note dans Obsidian via xdg-open, côté serveur.
+
+    Indispensable quand le dashboard est affiché dans un navigateur qui ne
+    gère pas le protocole obsidian:// (navigateur intégré VSCode, etc.).
+    """
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "")
+
+    if not name or "/" in name or name.startswith("."):
+        return jsonify({"error": "Nom de note invalide"}), 400
+
+    config = load_config()
+    note_file = _find_vault_note(name, config)
+
+    if note_file is not None:
+        vault = Path(config["obsidian_dir"]).expanduser()
+        file_param = str(note_file.relative_to(vault).with_suffix(""))
+        target = f"obsidian://open?vault={quote(vault.name)}&file={quote(file_param)}"
+    elif (MARKDOWN_DIR / f"{name}.md").exists():
+        # Pas dans le vault : ouvrir l'export local avec l'application par défaut
+        target = str(MARKDOWN_DIR / f"{name}.md")
+    else:
+        return jsonify({"error": f"Note introuvable : {name}"}), 404
+
+    subprocess.Popen(
+        ["xdg-open", target],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return jsonify({"ok": True, "target": target})
 
 
 @app.post("/api/note/delete")
