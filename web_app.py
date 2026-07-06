@@ -25,6 +25,7 @@ from app import (
     JSON_DIR,
     MARKDOWN_DIR,
     TXT_DIR,
+    find_vault_note,
     load_config,
     load_gemini_stats,
 )
@@ -83,66 +84,77 @@ def _reader_thread(process: subprocess.Popen) -> None:
 
 
 def _find_vault_note(note_name: str, config: dict) -> Path | None:
+    return find_vault_note(
+        note_name,
+        config.get("obsidian_dir"),
+        config.get("obsidian_subdir")
+    )
+
+
+def _vault_stems(config: dict) -> set[str] | None:
+    """Noms de toutes les notes présentes dans le vault (None si pas de vault)."""
     obsidian_dir = config.get("obsidian_dir")
     if not obsidian_dir:
         return None
 
-    base = Path(obsidian_dir).expanduser() / (config.get("obsidian_subdir") or "")
-
-    flat = base / f"{note_name}.md"
-    if flat.exists():
-        return flat
-
-    # Sous-dossiers mensuels (classement 2026-07, 2026-08, ...)
-    for candidate in sorted(base.glob(f"[0-9][0-9][0-9][0-9]-[0-9][0-9]/{note_name}.md"), reverse=True):
-        return candidate
-
-    # N'importe où ailleurs dans le vault (note reclassée à la main)
     vault = Path(obsidian_dir).expanduser()
-    for candidate in vault.rglob(f"{note_name}.md"):
-        if ".obsidian" not in candidate.parts and ".trash" not in candidate.parts:
-            return candidate
-
-    return None
-
-
-def _obsidian_url(note_name: str, config: dict) -> str | None:
-    note_file = _find_vault_note(note_name, config)
-    if note_file is None:
+    if not vault.is_dir():
         return None
 
-    vault = Path(config["obsidian_dir"]).expanduser()
-    file_param = str(note_file.relative_to(vault).with_suffix(""))
-    return f"obsidian://open?vault={quote(vault.name)}&file={quote(file_param)}"
+    return {
+        f.stem for f in vault.rglob("*.md")
+        if ".obsidian" not in f.parts and ".trash" not in f.parts
+    }
 
 
-def _recent_notes(config: dict, limit: int = 8) -> list[dict]:
+_duration_cache: dict[str, tuple[float, int | None]] = {}
+
+
+def _note_duration(name: str) -> int | None:
+    json_file = JSON_DIR / f"{name}.json"
+    if not json_file.exists():
+        return None
+
+    mtime = json_file.stat().st_mtime
+    cached = _duration_cache.get(name)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    duration = None
+    try:
+        segments = json.loads(json_file.read_text()).get("segments", [])
+        if segments:
+            duration = round(segments[-1]["end"])
+    except (json.JSONDecodeError, OSError, KeyError):
+        pass
+
+    _duration_cache[name] = (mtime, duration)
+    return duration
+
+
+def _recent_notes(config: dict) -> list[dict]:
+    # La page reflète le vault : une note supprimée dans Obsidian disparaît
+    # de la liste (l'export local reste sur disque en filet de sécurité).
+    vault_stems = _vault_stems(config)
+
     notes = []
     for md_file in sorted(
         MARKDOWN_DIR.glob("*.md"),
         key=lambda f: f.stat().st_mtime,
         reverse=True
-    )[:limit]:
-        duration = None
-        json_file = JSON_DIR / f"{md_file.stem}.json"
-        if json_file.exists():
-            try:
-                segments = json.loads(json_file.read_text()).get("segments", [])
-                if segments:
-                    duration = round(segments[-1]["end"])
-            except (json.JSONDecodeError, OSError, KeyError):
-                pass
+    ):
+        if vault_stems is not None and md_file.stem not in vault_stems:
+            continue
 
         notes.append({
             "name": md_file.stem,
             "modified": md_file.stat().st_mtime,
-            "duration_seconds": duration,
-            "obsidian_url": _obsidian_url(md_file.stem, config),
+            "duration_seconds": _note_duration(md_file.stem),
         })
     return notes
 
 
-def _captures(limit: int = 8) -> list[dict]:
+def _captures(limit: int = 100) -> list[dict]:
     captures = []
     for wav_file in sorted(
         CAPTURE_DIR.glob("*.wav"),
@@ -201,10 +213,6 @@ def status():
             "title": _job["title"],
             "note": _job["note"],
             "note_name": Path(_job["note"]).stem if _job["note"] else None,
-            "note_url": (
-                _obsidian_url(Path(_job["note"]).stem, config)
-                if _job["note"] else None
-            ),
             "log": list(_job["log"])[-15:],
         }
 

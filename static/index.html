@@ -94,10 +94,15 @@
   .meter > div { height: 100%; border-radius: 3px; background: var(--accent); width: 0%; transition: width 0.6s; }
 
   /* --- Notes --- */
+  .scrollbox { max-height: 290px; overflow-y: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   th { text-align: left; color: var(--muted); font-weight: 500; font-size: 0.75rem;
        text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 8px;
-       border-bottom: 1px solid var(--grid); }
+       border-bottom: 1px solid var(--grid);
+       position: sticky; top: 0; background: var(--surface-1); z-index: 1; }
+  tr.month td { color: var(--muted); font-weight: 600; font-size: 0.78rem;
+                background: var(--page); text-transform: capitalize;
+                font-variant-numeric: normal; }
   td { padding: 8px; border-bottom: 1px solid var(--grid);
        font-variant-numeric: tabular-nums; }
   td.name { font-variant-numeric: normal; }
@@ -110,6 +115,7 @@
   }
   button.mini:hover { border-color: var(--accent); color: var(--accent); }
   button.mini:disabled { opacity: 0.4; cursor: default; }
+  button.mini.danger { border-color: var(--critical); color: var(--critical); font-weight: 600; }
 
   /* --- Réglages + journal --- */
   .settings { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; color: var(--text-secondary); flex-wrap: wrap; }
@@ -162,19 +168,23 @@
   </div>
 
   <div class="card" style="margin-top:16px">
-    <h2>Notes récentes <span class="pill" id="notesCount"></span></h2>
-    <table>
-      <thead><tr><th>Note</th><th>Durée audio</th><th>Modifiée</th><th></th></tr></thead>
-      <tbody id="notesBody"></tbody>
-    </table>
+    <h2>Notes <span class="pill" id="notesCount"></span> <span class="pill">— synchronisées avec Obsidian, classées par mois</span></h2>
+    <div class="scrollbox">
+      <table>
+        <thead><tr><th>Note</th><th>Durée audio</th><th>Modifiée</th><th></th></tr></thead>
+        <tbody id="notesBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card">
     <h2>Captures audio <span class="pill" id="capturesCount"></span></h2>
-    <table>
-      <thead><tr><th>Fichier</th><th>Durée</th><th>Enregistré</th><th>État</th><th></th></tr></thead>
-      <tbody id="capturesBody"></tbody>
-    </table>
+    <div class="scrollbox">
+      <table>
+        <thead><tr><th>Fichier</th><th>Durée</th><th>Enregistré</th><th>État</th><th></th></tr></thead>
+        <tbody id="capturesBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card">
@@ -225,7 +235,10 @@ async function refresh() {
   document.getElementById("lastDuration").textContent = fmt(data.recording_seconds);
 
   const banner = document.getElementById("banner");
-  if (data.silence_warning && phase === "recording") {
+  if (uiError && (Date.now() - uiError.at < 5000)) {
+    banner.className = "banner warn";
+    banner.textContent = "⚠️ " + uiError.message;
+  } else if (data.silence_warning && phase === "recording") {
     banner.className = "banner warn";
     banner.textContent = "⚠️ Aucun son détecté — vérifie que ta vidéo/ton podcast joue et la source audio.";
   } else if (phase === "done" && data.note) {
@@ -255,9 +268,23 @@ async function refresh() {
   document.getElementById("cost").textContent = "$" + q.cost_estimate.toFixed(4);
   document.getElementById("count").textContent = q.transcriptions;
 
+  const busy = phase === "recording" || phase === "processing";
+  const monthLabel = ts => new Date(ts * 1000)
+    .toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+
   const body = document.getElementById("notesBody");
   body.innerHTML = "";
+  let currentMonth = null;
   for (const note of data.notes) {
+    const month = monthLabel(note.modified);
+    if (month !== currentMonth) {
+      currentMonth = month;
+      const trm = document.createElement("tr");
+      trm.className = "month";
+      trm.innerHTML = "<td colspan='4'></td>";
+      trm.firstChild.textContent = "📅 " + month;
+      body.appendChild(trm);
+    }
     const tr = document.createElement("tr");
     const d = new Date(note.modified * 1000);
     tr.innerHTML = "<td class='name'></td><td>" + fmt(note.duration_seconds) +
@@ -266,14 +293,9 @@ async function refresh() {
                    "</td><td class='open'></td>";
     tr.querySelector(".name").textContent = note.name;
     const cell = tr.querySelector(".open");
-    const busy = phase === "recording" || phase === "processing";
     addMini(cell, "Ouvrir ↗", false, () => action("/api/note/open", note.name));
     addMini(cell, "✨ Ré-enrichir", busy, () => action("/api/reenrich", note.name));
-    addMini(cell, "🗑", busy, () => {
-      if (confirm("Supprimer définitivement la note « " + note.name +
-                  " » (exports + copie Obsidian) ?"))
-        action("/api/note/delete", note.name);
-    });
+    addDelete(cell, "note:" + note.name, busy, () => action("/api/note/delete", note.name));
     body.appendChild(tr);
   }
   document.getElementById("notesCount").textContent = "(" + data.notes.length + ")";
@@ -290,12 +312,8 @@ async function refresh() {
                    "</td><td class='act'></td>";
     tr.querySelector(".name").textContent = cap.name;
     const cell = tr.querySelector(".act");
-    const busy = phase === "recording" || phase === "processing";
     addMini(cell, "📝 Transcrire", busy, () => action("/api/transcribe", cap.name));
-    addMini(cell, "🗑", busy, () => {
-      if (confirm("Supprimer définitivement l'audio « " + cap.name + ".wav » ?"))
-        action("/api/capture/delete", cap.name);
-    });
+    addDelete(cell, "capture:" + cap.name, busy, () => action("/api/capture/delete", cap.name));
     capBody.appendChild(tr);
   }
   document.getElementById("capturesCount").textContent = "(" + data.captures.length + ")";
@@ -318,7 +336,30 @@ function addMini(cell, label, disabled, onclick) {
   btn.onclick = onclick;
   cell.appendChild(document.createTextNode(" "));
   cell.appendChild(btn);
+  return btn;
 }
+
+// Confirmation intégrée à la page (les popups confirm() sont bloquées dans
+// certains navigateurs, ex. celui de VSCode) : 1er clic arme le bouton
+// pendant 4 s, 2e clic supprime. L'état survit au rafraîchissement 1 s.
+const armed = {};
+
+function addDelete(cell, key, disabled, doDelete) {
+  const isArmed = armed[key] && (Date.now() - armed[key] < 4000);
+  const btn = addMini(cell, isArmed ? "Confirmer ?" : "🗑", disabled, () => {
+    if (armed[key] && (Date.now() - armed[key] < 4000)) {
+      delete armed[key];
+      doDelete();
+    } else {
+      armed[key] = Date.now();
+      btn.textContent = "Confirmer ?";
+      btn.className = "mini danger";
+    }
+  });
+  if (isArmed) btn.className = "mini danger";
+}
+
+let uiError = null;
 
 async function action(url, name) {
   const r = await fetch(url, {
@@ -327,7 +368,7 @@ async function action(url, name) {
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    alert(err.error || "Action impossible");
+    uiError = { message: err.error || "Action impossible", at: Date.now() };
   }
   refresh();
 }

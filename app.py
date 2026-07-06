@@ -949,6 +949,34 @@ def rename_outputs(outputs: dict, new_name: str) -> dict:
     print(f"[OK] Notes renommées : {new_name}")
     return renamed
 
+def find_vault_note(
+    name: str,
+    obsidian_dir: str | None,
+    obsidian_subdir: str | None = None
+) -> Path | None:
+    """Retrouve une note dans le vault : inbox, dossiers mensuels, puis partout."""
+    if not obsidian_dir:
+        return None
+
+    vault = Path(obsidian_dir).expanduser()
+    base = vault / (obsidian_subdir or "")
+
+    flat = base / f"{name}.md"
+    if flat.exists():
+        return flat
+
+    for candidate in sorted(
+        base.glob(f"[0-9][0-9][0-9][0-9]-[0-9][0-9]/{name}.md"), reverse=True
+    ):
+        return candidate
+
+    for candidate in vault.rglob(f"{name}.md"):
+        if ".obsidian" not in candidate.parts and ".trash" not in candidate.parts:
+            return candidate
+
+    return None
+
+
 def export_to_obsidian(
     markdown_file: Path,
     obsidian_dir: str,
@@ -1143,12 +1171,19 @@ def command_reenrich(args) -> None:
     obsidian_subdir = args.obsidian_subdir or config.get("obsidian_subdir")
 
     if obsidian_dir:
-        export_to_obsidian(
-            markdown_file=markdown_file,
-            obsidian_dir=obsidian_dir,
-            obsidian_subdir=obsidian_subdir,
-            monthly_folder=config.get("obsidian_monthly_folders", True)
-        )
+        # Mettre à jour la note là où elle se trouve déjà dans le vault,
+        # sinon l'exporter normalement.
+        existing = find_vault_note(name, obsidian_dir, obsidian_subdir)
+        if existing:
+            shutil.copy2(markdown_file, existing)
+            print(f"[OK] Export Obsidian : {existing}")
+        else:
+            export_to_obsidian(
+                markdown_file=markdown_file,
+                obsidian_dir=obsidian_dir,
+                obsidian_subdir=obsidian_subdir,
+                monthly_folder=config.get("obsidian_monthly_folders", True)
+            )
 
 
 def command_run(args) -> None:
