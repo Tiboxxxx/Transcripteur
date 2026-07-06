@@ -132,6 +132,25 @@ def _note_duration(name: str) -> int | None:
     return duration
 
 
+_enriched_cache: dict[str, tuple[float, bool]] = {}
+
+
+def _note_enriched(md_file: Path) -> bool:
+    mtime = md_file.stat().st_mtime
+    cached = _enriched_cache.get(md_file.stem)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    try:
+        head = md_file.read_text(encoding="utf-8", errors="ignore")[:1200]
+        enriched = "enriched_by:" in head
+    except OSError:
+        enriched = False
+
+    _enriched_cache[md_file.stem] = (mtime, enriched)
+    return enriched
+
+
 def _recent_notes(config: dict) -> list[dict]:
     # La page reflète le vault : une note supprimée dans Obsidian disparaît
     # de la liste (l'export local reste sur disque en filet de sécurité).
@@ -150,6 +169,7 @@ def _recent_notes(config: dict) -> list[dict]:
             "name": md_file.stem,
             "modified": md_file.stat().st_mtime,
             "duration_seconds": _note_duration(md_file.stem),
+            "enriched": _note_enriched(md_file),
         })
     return notes
 

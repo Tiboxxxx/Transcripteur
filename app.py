@@ -941,7 +941,9 @@ def rename_outputs(outputs: dict, new_name: str) -> dict:
     renamed = dict(outputs)
 
     for key in ("markdown", "txt", "json"):
-        old_file = outputs[key]
+        old_file = outputs.get(key)
+        if old_file is None or not old_file.exists():
+            continue
         new_file = unique_path(old_file.with_stem(new_name))
         old_file.rename(new_file)
         renamed[key] = new_file
@@ -1161,6 +1163,22 @@ def command_reenrich(args) -> None:
         title = enrichment["title"]
         print(f"[OK] Titre proposé par Gemini : {title}")
 
+    # Renommer la note d'après son titre, comme les nouveaux enregistrements
+    original_name = name
+    if title:
+        slug = slugify_title(title)
+        if slug and slug != name:
+            outputs = rename_outputs(
+                {
+                    "markdown": markdown_file,
+                    "txt": TXT_DIR / f"{name}.txt",
+                    "json": json_file,
+                },
+                slug
+            )
+            markdown_file = outputs["markdown"]
+            name = markdown_file.stem
+
     enrich_markdown_for_obsidian(
         markdown_file=markdown_file,
         title=title,
@@ -1171,12 +1189,15 @@ def command_reenrich(args) -> None:
     obsidian_subdir = args.obsidian_subdir or config.get("obsidian_subdir")
 
     if obsidian_dir:
-        # Mettre à jour la note là où elle se trouve déjà dans le vault,
-        # sinon l'exporter normalement.
-        existing = find_vault_note(name, obsidian_dir, obsidian_subdir)
+        # Mettre à jour la note dans le dossier où l'utilisateur l'a rangée,
+        # sous son nouveau nom ; sinon l'exporter normalement.
+        existing = find_vault_note(original_name, obsidian_dir, obsidian_subdir)
         if existing:
-            shutil.copy2(markdown_file, existing)
-            print(f"[OK] Export Obsidian : {existing}")
+            destination = existing.parent / markdown_file.name
+            shutil.copy2(markdown_file, destination)
+            if destination != existing:
+                existing.unlink()
+            print(f"[OK] Export Obsidian : {destination}")
         else:
             export_to_obsidian(
                 markdown_file=markdown_file,

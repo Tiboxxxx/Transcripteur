@@ -168,7 +168,7 @@
   </div>
 
   <div class="card" style="margin-top:16px">
-    <h2>Notes <span class="pill" id="notesCount"></span> <span class="pill">— synchronisées avec Obsidian, classées par mois</span></h2>
+    <h2>Notes <span class="pill" id="notesCount"></span> <span class="pill">— synchronisées avec Obsidian · ✨ = enrichie, prête à travailler</span></h2>
     <div class="scrollbox">
       <table>
         <thead><tr><th>Note</th><th>Durée audio</th><th>Modifiée</th><th></th></tr></thead>
@@ -291,10 +291,11 @@ async function refresh() {
                    "</td><td>" + d.toLocaleDateString("fr-FR") + " " +
                    d.toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}) +
                    "</td><td class='open'></td>";
-    tr.querySelector(".name").textContent = note.name;
+    tr.querySelector(".name").textContent = (note.enriched ? "✨ " : "") + note.name;
     const cell = tr.querySelector(".open");
     addMini(cell, "Ouvrir ↗", false, () => action("/api/note/open", note.name));
-    addMini(cell, "✨ Ré-enrichir", busy, () => action("/api/reenrich", note.name));
+    addMini(cell, note.enriched ? "↻ Ré-enrichir" : "✨ Enrichir", busy,
+            () => action("/api/reenrich", note.name));
     addDelete(cell, "note:" + note.name, busy, () => action("/api/note/delete", note.name));
     body.appendChild(tr);
   }
