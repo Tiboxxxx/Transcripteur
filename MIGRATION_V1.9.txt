@@ -1,0 +1,145 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                     TRANSCRIPTEUR V1.9 - MIGRATION GUIDE                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+📦 CHANGEMENTS MAJEURS
+════════════════════════════════════════════════════════════════════════════
+
+  Architecture V1.9 :
+  
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  Audio (FFmpeg) → Whisper (GPU Local) → Gemini (Cloud API)      │
+  │                                                                  │
+  │  • Transcription : Locale, rapide, gratuite                     │
+  │  • Enrichissement : IA Cloud, résumé + keywords + sentiment     │
+  │  • Export : Markdown enrichi + Obsidian                         │
+  └─────────────────────────────────────────────────────────────────┘
+
+
+✨ NOUVEAUTÉS
+════════════════════════════════════════════════════════════════════════════
+
+  ✅ Enrichissement automatique Gemini
+  ✅ Résumés intelligents (2-3 phrases)
+  ✅ Extraction de keywords
+  ✅ Analyse de sentiment
+  ✅ Score de qualité (0-100)
+  ✅ Frontmatter YAML enrichi
+  ✅ Support variable d'env GEMINI_API_KEY
+  ✅ Config JSON optionnelle
+
+
+🚀 DÉMARRAGE EN 4 ÉTAPES
+════════════════════════════════════════════════════════════════════════════
+
+  1️⃣  OBTENIR CLÉ API (2 min)
+      → https://aistudio.google.com/apikey
+      → Créer API Key → Copier
+
+  2️⃣  CONFIGURER (1 min)
+      Option A : config.json
+      {
+        "gemini_api_key": "AIzaSy..."
+      }
+
+      Option B : Variable d'env
+      export GEMINI_API_KEY="AIzaSy..."
+
+  3️⃣  TESTER (30 sec)
+      source venv/bin/activate
+      python3 test_gemini.py
+      
+      Résultat : "Test Result: PASSED"
+
+  4️⃣  UTILISER (identique à avant)
+      python3 app.py run --name "ma_video" --duration 120
+
+
+📋 FICHIERS IMPACTÉS
+════════════════════════════════════════════════════════════════════════════
+
+  MODIFIÉS :
+    app.py                  ← Core (Whisper + Gemini)
+    config.json             ← Nouvelle config
+
+  NOUVEAUX :
+    test_gemini.py          ← Test API
+    SETUP_GEMINI.md         ← Guide complet
+    V1.9_CHANGES.md         ← Détails techniques
+    README_V1.9.md          ← Ce fichier
+    MIGRATION_V1.9.txt      ← Ce guide
+
+  CRÉÉS :
+    venv/                   ← Python isolé (avec google-genai)
+    app_v1_8_backup.py      ← Backup V1.8
+
+
+⚡ PERF & COÛTS
+════════════════════════════════════════════════════════════════════════════
+
+  Performance :
+    • Whisper : ~30s / 10min audio (GPU)
+    • Gemini : ~5-10s API call
+    • Total : ~40s / 10min audio ⚡
+
+  Coûts :
+    • Gratuit jusqu'à 1M tokens/jour
+    • ~1000 transcriptions/jour gratuites ✅
+    • Modèle : Gemini 1.5 Flash (ultra rapide)
+
+
+🛡️  SÉCURITÉ IMPORTANT
+════════════════════════════════════════════════════════════════════════════
+
+  ⚠️  NE PAS COMMITTER config.json avec clé API
+
+  Faire :
+    echo "config.json" >> .gitignore
+    export GEMINI_API_KEY="..."
+
+  Ne PAS faire :
+    git add config.json  # ❌
+    echo 'AIzaSy...' en dur  # ❌
+
+
+📞 TROUBLESHOOTING
+════════════════════════════════════════════════════════════════════════════
+
+  "API key not valid"
+    → Vérifier clé commence par "AIza"
+    → Régénérer clé en Google AI Studio
+
+  "enable_gemini_enrichment: false"
+    → Éditer config.json : "enable_gemini_enrichment": true
+
+  Enrichissement silencieusement échoué
+    → C'est ok! Continu sans enrichissement
+    → Vérifier GEMINI_API_KEY
+
+
+📚 DOCUMENTATION COMPLÈTE
+════════════════════════════════════════════════════════════════════════════
+
+  SETUP_GEMINI.md      ← Configuration détaillée + API keys
+  V1.9_CHANGES.md      ← Architecture technique
+  README_V1.9.md       ← Quick start
+  app.py               ← Code source commenté
+
+
+✅ CHECKLIST MIGRATION
+════════════════════════════════════════════════════════════════════════════
+
+  [ ] Créer clé API Google AI Studio
+  [ ] Configurer GEMINI_API_KEY (config.json OU env var)
+  [ ] Exécuter : python3 test_gemini.py
+  [ ] Vérifier : "Test Result: PASSED"
+  [ ] Utiliser : python3 app.py run --name "test"
+  [ ] Ajouter config.json à .gitignore
+  [ ] Profiter des transcriptions enrichies! 🚀
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+               Besoin d'aide ? Consultez SETUP_GEMINI.md
+
+═════════════════════════════════════════════════════════════════════════════

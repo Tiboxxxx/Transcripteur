@@ -1,0 +1,9 @@
+{
+  "default_model": "small",
+  "default_language": "fr",
+  "default_device": "cpu",
+  "obsidian_dir": "/home/oneweb/Documents/MonVault",
+  "obsidian_subdir": "00_INBOX",
+  "gemini_api_key": "METTRE_VOTRE_CLE_ICI (ou utiliser GEMINI_API_KEY en variable d environnement)",
+  "enable_gemini_enrichment": true
+}

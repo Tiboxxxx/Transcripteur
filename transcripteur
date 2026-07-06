@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+source "$SCRIPT_DIR/venv/bin/activate"
+
+export LD_LIBRARY_PATH="$("$SCRIPT_DIR/venv/bin/python" - <<'PY'
+import site
+import glob
+import os
+
+paths = []
+
+for root in site.getsitepackages():
+    paths += glob.glob(os.path.join(root, "nvidia", "*", "lib"))
+
+print(":".join(paths))
+PY
+):${LD_LIBRARY_PATH:-}"
+
+if [ $# -eq 0 ]; then
+    # Mode zéro-friction : lance ta vidéo/ton podcast, CTRL+C pour arrêter.
+    # Nom horodaté automatique, renommé d'après le titre Gemini si activé.
+    echo "🎙️  Enregistrement immédiat — CTRL+C pour arrêter et transcrire."
+    exec python "$SCRIPT_DIR/app.py" run
+fi
+
+exec python "$SCRIPT_DIR/app.py" "$@"

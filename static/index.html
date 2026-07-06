@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🎙️ Transcripteur — Tableau de bord</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6;          /* bleu séquentiel (jauge quota) */
+    --accent-deep: #1c5cab;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    --rec: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --border: rgba(255,255,255,0.10);
+      --accent: #3987e5;
+      --accent-deep: #86b6ef;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    padding: 24px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.25rem; margin-bottom: 4px; }
+  .sub { color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 20px; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+
+  /* --- Panneau enregistrement --- */
+  .rec-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  button.rec {
+    border: none; border-radius: 999px; cursor: pointer;
+    padding: 14px 28px; font-size: 1rem; font-weight: 600;
+    background: var(--rec); color: #fff;
+  }
+  button.rec.stop { background: var(--text-primary); color: var(--page); }
+  button.rec:disabled { opacity: 0.45; cursor: default; }
+  .timer {
+    font-size: 2.4rem; font-weight: 650;
+    font-variant-numeric: tabular-nums;
+    min-width: 130px;
+  }
+  .phase { font-size: 0.85rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.recording { background: var(--rec); animation: blink 1.2s infinite; }
+  .dot.processing { background: var(--accent); animation: blink 1.2s infinite; }
+  .dot.done { background: var(--good); }
+  .dot.error { background: var(--critical); }
+  @keyframes blink { 50% { opacity: 0.25; } }
+
+  .banner {
+    display: none; margin-top: 12px; padding: 10px 14px; border-radius: 8px;
+    font-size: 0.9rem; border: 1px solid var(--border);
+  }
+  .banner.warn { display: block; background: rgba(250,178,25,0.12); }
+  .banner.ok   { display: block; background: rgba(12,163,12,0.10); }
+
+  /* --- Tuiles de stats --- */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tile .value { font-size: 1.6rem; font-weight: 650; margin-top: 4px; }
+  .tile .hint  { font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px; }
+
+  .meter { height: 6px; border-radius: 3px; background: var(--grid); margin-top: 10px; overflow: hidden; }
+  .meter > div { height: 100%; border-radius: 3px; background: var(--accent); width: 0%; transition: width 0.6s; }
+
+  /* --- Notes --- */
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 0.75rem;
+       text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 8px;
+       border-bottom: 1px solid var(--grid); }
+  td { padding: 8px; border-bottom: 1px solid var(--grid);
+       font-variant-numeric: tabular-nums; }
+  td.name { font-variant-numeric: normal; }
+  tr:last-child td { border-bottom: none; }
+  a.obsidian-link { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+  a.obsidian-link:hover { text-decoration: underline; }
+
+  /* --- Réglages + journal --- */
+  .settings { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; color: var(--text-secondary); flex-wrap: wrap; }
+  .settings label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-primary); }
+  pre.log {
+    background: var(--page); border: 1px solid var(--grid); border-radius: 8px;
+    padding: 10px 12px; font-size: 0.75rem; line-height: 1.5;
+    max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    color: var(--text-secondary);
+  }
+  h2 { font-size: 0.95rem; margin-bottom: 10px; }
+  .pill { font-size: 0.75rem; color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1>🎙️ Transcripteur — Tableau de bord</h1>
+  <div class="sub" id="configLine">Chargement…</div>
+
+  <div class="card">
+    <div class="rec-row">
+      <button class="rec" id="recBtn" onclick="toggleRecord()">⏺ Enregistrer</button>
+      <div class="timer" id="timer">00:00</div>
+      <div class="phase"><span class="dot" id="dot"></span><span id="phaseText">Prêt</span></div>
+    </div>
+    <div class="banner" id="banner"></div>
+  </div>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="label">Tokens restants</div>
+      <div class="value" id="tokensRemaining">–</div>
+      <div class="hint" id="tokensHint"></div>
+      <div class="meter"><div id="quotaBar"></div></div>
+    </div>
+    <div class="tile">
+      <div class="label">Coût estimé</div>
+      <div class="value" id="cost">–</div>
+      <div class="hint">depuis le début</div>
+    </div>
+    <div class="tile">
+      <div class="label">Transcriptions</div>
+      <div class="value" id="count">–</div>
+      <div class="hint">enrichies par Gemini</div>
+    </div>
+    <div class="tile">
+      <div class="label">Durée capturée</div>
+      <div class="value" id="lastDuration">–</div>
+      <div class="hint">enregistrement en cours / dernier</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Notes récentes <span class="pill" id="notesCount"></span></h2>
+    <table>
+      <thead><tr><th>Note</th><th>Durée audio</th><th>Modifiée</th><th></th></tr></thead>
+      <tbody id="notesBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="settings">
+      <label><input type="checkbox" id="enrichToggle" onchange="toggleEnrichment(this.checked)">
+        Enrichissement Gemini (résumé, structure, titre auto)</label>
+      <span class="pill" id="modelInfo"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Journal</h2>
+    <pre class="log" id="log">—</pre>
+  </div>
+
+<script>
+let phase = "idle";
+
+function fmt(sec) {
+  if (sec == null) return "–";
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : String(m).padStart(2, "0"))
+         + ":" + String(s).padStart(2, "0");
+}
+
+async function refresh() {
+  let data;
+  try {
+    data = await (await fetch("/api/status")).json();
+  } catch {
+    document.getElementById("phaseText").textContent = "Serveur injoignable";
+    return;
+  }
+
+  phase = data.phase;
+  const labels = { idle: "Prêt", recording: "Enregistrement en cours",
+                   processing: "Transcription en cours…", done: "Terminé ✓", error: "Erreur" };
+  document.getElementById("phaseText").textContent = labels[phase] || phase;
+  document.getElementById("dot").className = "dot " + phase;
+
+  const btn = document.getElementById("recBtn");
+  if (phase === "recording") { btn.textContent = "⏹ Arrêter et transcrire"; btn.className = "rec stop"; btn.disabled = false; }
+  else if (phase === "processing") { btn.textContent = "⏳ Transcription…"; btn.className = "rec"; btn.disabled = true; }
+  else { btn.textContent = "⏺ Enregistrer"; btn.className = "rec"; btn.disabled = false; }
+
+  document.getElementById("timer").textContent =
+    phase === "recording" ? fmt(data.recording_seconds) : fmt(data.elapsed_seconds);
+  document.getElementById("lastDuration").textContent = fmt(data.recording_seconds);
+
+  const banner = document.getElementById("banner");
+  if (data.silence_warning && phase === "recording") {
+    banner.className = "banner warn";
+    banner.textContent = "⚠️ Aucun son détecté — vérifie que ta vidéo/ton podcast joue et la source audio.";
+  } else if (phase === "done" && data.note) {
+    banner.className = "banner ok";
+    banner.textContent = "✅ " + (data.title ? "« " + data.title + " » — " : "") + "note : " + data.note;
+  } else if (phase === "error") {
+    banner.className = "banner warn";
+    banner.textContent = "❌ La dernière exécution a échoué — voir le journal ci-dessous.";
+  } else {
+    banner.className = "banner";
+  }
+
+  const q = data.quota;
+  document.getElementById("tokensRemaining").textContent = q.tokens_remaining.toLocaleString("fr-FR");
+  document.getElementById("tokensHint").textContent =
+    q.percent_used + " % utilisés sur " + (q.tokens_limit / 1e6) + " M" +
+    (q.month ? " · " + q.month : "");
+  document.getElementById("quotaBar").style.width = Math.min(q.percent_used, 100) + "%";
+  document.getElementById("quotaBar").style.background =
+    q.percent_used > 90 ? "var(--critical)" : q.percent_used > 75 ? "var(--warning)" : "var(--accent)";
+  document.getElementById("cost").textContent = "$" + q.cost_estimate.toFixed(4);
+  document.getElementById("count").textContent = q.transcriptions;
+
+  const body = document.getElementById("notesBody");
+  body.innerHTML = "";
+  for (const note of data.notes) {
+    const tr = document.createElement("tr");
+    const d = new Date(note.modified * 1000);
+    tr.innerHTML = "<td class='name'></td><td>" + fmt(note.duration_seconds) +
+                   "</td><td>" + d.toLocaleDateString("fr-FR") + " " +
+                   d.toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}) +
+                   "</td><td class='open'></td>";
+    tr.querySelector(".name").textContent = note.name;
+    if (note.obsidian_url) {
+      const a = document.createElement("a");
+      a.href = note.obsidian_url;
+      a.textContent = "Ouvrir ↗";
+      a.className = "obsidian-link";
+      tr.querySelector(".open").appendChild(a);
+    }
+    body.appendChild(tr);
+  }
+  document.getElementById("notesCount").textContent = "(" + data.notes.length + ")";
+
+  const c = data.config;
+  document.getElementById("configLine").textContent =
+    "Whisper « " + c.model + " » · " + c.language + " · " + c.device +
+    (c.obsidian_dir ? " · Obsidian : " + c.obsidian_dir : "");
+  document.getElementById("enrichToggle").checked = c.enrichment;
+  document.getElementById("modelInfo").textContent = c.enrichment ? "gemini-flash-latest" : "désactivé";
+
+  document.getElementById("log").textContent = data.log.length ? data.log.join("\n") : "—";
+}
+
+async function toggleRecord() {
+  const url = phase === "recording" ? "/api/record/stop" : "/api/record/start";
+  await fetch(url, { method: "POST", headers: {"Content-Type": "application/json"}, body: "{}" });
+  refresh();
+}
+
+async function toggleEnrichment(enabled) {
+  await fetch("/api/config/enrichment", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ enabled })
+  });
+}
+
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
