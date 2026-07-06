@@ -35,6 +35,8 @@ Le tableau de bord affiche aussi :
 - **Captures audio** : bouton *📝 Transcrire* pour un `.wav` jamais transcrit.
 - Bouton *✨ Ré-enrichir* : régénère résumé/structure/titre d'une note
   existante (⚠️ remplace son contenu dans le vault).
+- Boutons *🗑* : suppression d'une note (exports + copie Obsidian) ou d'un
+  audio, avec confirmation obligatoire.
 - Interrupteur pour activer/désactiver l'enrichissement Gemini.
 - Le **Journal** en bas montre ce qui se passe (utile en cas d'erreur).
 
@@ -80,6 +82,7 @@ cp config.example.json config.json    # puis éditer (voir Configuration)
   "default_device": "cpu",
   "obsidian_dir": "/home/moi/Documents/MonVault",
   "obsidian_subdir": "00_INBOX",
+  "obsidian_monthly_folders": true,
   "gemini_api_key": "...",
   "enable_gemini_enrichment": true
 }
@@ -103,7 +106,7 @@ cp config.example.json config.json    # puis éditer (voir Configuration)
 | Fichier | Emplacement |
 |---|---|
 | Audio brut `.wav` | `captures/` (sauf `--delete-audio`) |
-| Note Markdown enrichie | `transcriptions/markdown/` + copie dans le vault Obsidian |
+| Note Markdown enrichie | `transcriptions/markdown/` + copie dans le vault, classée par mois (`00_INBOX/2026-07/…`) |
 | Texte brut `.txt` | `transcriptions/txt/` |
 | Export `.json` (segments horodatés) | `transcriptions/json/` — sert au ré-enrichissement |
 | Suivi du quota Gemini | `logs/gemini_stats.json` (reset mensuel automatique) |

@@ -24,6 +24,7 @@ from app import (
     CONFIG_FILE,
     JSON_DIR,
     MARKDOWN_DIR,
+    TXT_DIR,
     load_config,
     load_gemini_stats,
 )
@@ -81,18 +82,31 @@ def _reader_thread(process: subprocess.Popen) -> None:
         _job["process"] = None
 
 
-def _obsidian_url(note_name: str, config: dict) -> str | None:
+def _find_vault_note(note_name: str, config: dict) -> Path | None:
     obsidian_dir = config.get("obsidian_dir")
     if not obsidian_dir:
         return None
 
-    vault = Path(obsidian_dir).expanduser()
-    subdir = config.get("obsidian_subdir") or ""
-    note_file = vault / subdir / f"{note_name}.md"
-    if not note_file.exists():
+    base = Path(obsidian_dir).expanduser() / (config.get("obsidian_subdir") or "")
+
+    flat = base / f"{note_name}.md"
+    if flat.exists():
+        return flat
+
+    # Sous-dossiers mensuels (classement 2026-07, 2026-08, ...)
+    for candidate in sorted(base.glob(f"[0-9][0-9][0-9][0-9]-[0-9][0-9]/{note_name}.md"), reverse=True):
+        return candidate
+
+    return None
+
+
+def _obsidian_url(note_name: str, config: dict) -> str | None:
+    note_file = _find_vault_note(note_name, config)
+    if note_file is None:
         return None
 
-    file_param = f"{subdir}/{note_name}" if subdir else note_name
+    vault = Path(config["obsidian_dir"]).expanduser()
+    file_param = str(note_file.relative_to(vault).with_suffix(""))
     return f"obsidian://open?vault={quote(vault.name)}&file={quote(file_param)}"
 
 
@@ -180,6 +194,10 @@ def status():
             "silence_warning": _job["silence_warning"],
             "title": _job["title"],
             "note": _job["note"],
+            "note_url": (
+                _obsidian_url(Path(_job["note"]).stem, config)
+                if _job["note"] else None
+            ),
             "log": list(_job["log"])[-15:],
         }
 
@@ -282,6 +300,52 @@ def record_stop():
         # SIGINT = équivalent CTRL+C : arrêt propre puis transcription
         process.send_signal(signal.SIGINT)
     return jsonify({"ok": True})
+
+
+@app.post("/api/note/delete")
+def note_delete():
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "")
+
+    if not name or "/" in name or name.startswith("."):
+        return jsonify({"error": "Nom de note invalide"}), 400
+
+    config = load_config()
+    deleted = []
+
+    targets = [
+        MARKDOWN_DIR / f"{name}.md",
+        TXT_DIR / f"{name}.txt",
+        JSON_DIR / f"{name}.json",
+    ]
+    vault_note = _find_vault_note(name, config)
+    if vault_note:
+        targets.append(vault_note)
+
+    for target in targets:
+        if target.exists():
+            target.unlink()
+            deleted.append(str(target))
+
+    if not deleted:
+        return jsonify({"error": f"Note inconnue : {name}"}), 404
+    return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.post("/api/capture/delete")
+def capture_delete():
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "")
+
+    if not name or "/" in name or name.startswith("."):
+        return jsonify({"error": "Nom de capture invalide"}), 400
+
+    wav_file = CAPTURE_DIR / f"{name}.wav"
+    if not wav_file.exists():
+        return jsonify({"error": f"Capture inconnue : {name}"}), 404
+
+    wav_file.unlink()
+    return jsonify({"ok": True, "deleted": [str(wav_file)]})
 
 
 @app.post("/api/config/enrichment")

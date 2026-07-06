@@ -230,7 +230,16 @@ async function refresh() {
     banner.textContent = "⚠️ Aucun son détecté — vérifie que ta vidéo/ton podcast joue et la source audio.";
   } else if (phase === "done" && data.note) {
     banner.className = "banner ok";
-    banner.textContent = "✅ " + (data.title ? "« " + data.title + " » — " : "") + "note : " + data.note;
+    banner.textContent = "✅ " + (data.title ? "« " + data.title + " »" : "Note créée") + " ";
+    if (data.note_url) {
+      const a = document.createElement("a");
+      a.href = data.note_url;
+      a.textContent = "Ouvrir dans Obsidian ↗";
+      a.className = "obsidian-link";
+      banner.appendChild(a);
+    } else {
+      banner.appendChild(document.createTextNode("— " + data.note));
+    }
   } else if (phase === "error") {
     banner.className = "banner warn";
     banner.textContent = "❌ La dernière exécution a échoué — voir le journal ci-dessous.";
@@ -266,13 +275,14 @@ async function refresh() {
       a.className = "obsidian-link";
       tr.querySelector(".open").appendChild(a);
     }
-    const btn = document.createElement("button");
-    btn.className = "mini";
-    btn.textContent = "✨ Ré-enrichir";
-    btn.disabled = phase === "recording" || phase === "processing";
-    btn.onclick = () => action("/api/reenrich", note.name);
-    tr.querySelector(".open").appendChild(document.createTextNode(" "));
-    tr.querySelector(".open").appendChild(btn);
+    const cell = tr.querySelector(".open");
+    const busy = phase === "recording" || phase === "processing";
+    addMini(cell, "✨ Ré-enrichir", busy, () => action("/api/reenrich", note.name));
+    addMini(cell, "🗑", busy, () => {
+      if (confirm("Supprimer définitivement la note « " + note.name +
+                  " » (exports + copie Obsidian) ?"))
+        action("/api/note/delete", note.name);
+    });
     body.appendChild(tr);
   }
   document.getElementById("notesCount").textContent = "(" + data.notes.length + ")";
@@ -288,12 +298,13 @@ async function refresh() {
                    "</td><td>" + (cap.transcribed ? "transcrit ✓" : "non transcrit") +
                    "</td><td class='act'></td>";
     tr.querySelector(".name").textContent = cap.name;
-    const btn = document.createElement("button");
-    btn.className = "mini";
-    btn.textContent = "📝 Transcrire";
-    btn.disabled = phase === "recording" || phase === "processing";
-    btn.onclick = () => action("/api/transcribe", cap.name);
-    tr.querySelector(".act").appendChild(btn);
+    const cell = tr.querySelector(".act");
+    const busy = phase === "recording" || phase === "processing";
+    addMini(cell, "📝 Transcrire", busy, () => action("/api/transcribe", cap.name));
+    addMini(cell, "🗑", busy, () => {
+      if (confirm("Supprimer définitivement l'audio « " + cap.name + ".wav » ?"))
+        action("/api/capture/delete", cap.name);
+    });
     capBody.appendChild(tr);
   }
   document.getElementById("capturesCount").textContent = "(" + data.captures.length + ")";
@@ -306,6 +317,16 @@ async function refresh() {
   document.getElementById("modelInfo").textContent = c.enrichment ? "gemini-flash-latest" : "désactivé";
 
   document.getElementById("log").textContent = data.log.length ? data.log.join("\n") : "—";
+}
+
+function addMini(cell, label, disabled, onclick) {
+  const btn = document.createElement("button");
+  btn.className = "mini";
+  btn.textContent = label;
+  btn.disabled = disabled;
+  btn.onclick = onclick;
+  cell.appendChild(document.createTextNode(" "));
+  cell.appendChild(btn);
 }
 
 async function action(url, name) {

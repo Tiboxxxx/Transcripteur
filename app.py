@@ -952,7 +952,8 @@ def rename_outputs(outputs: dict, new_name: str) -> dict:
 def export_to_obsidian(
     markdown_file: Path,
     obsidian_dir: str,
-    obsidian_subdir: str | None = None
+    obsidian_subdir: str | None = None,
+    monthly_folder: bool = True
 ) -> Path:
     vault_dir = Path(obsidian_dir).expanduser()
 
@@ -960,6 +961,10 @@ def export_to_obsidian(
         destination_dir = vault_dir / obsidian_subdir
     else:
         destination_dir = vault_dir
+
+    # Classement par mois pour garder une inbox navigable
+    if monthly_folder:
+        destination_dir = destination_dir / datetime.now().strftime("%Y-%m")
 
     destination_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1081,7 +1086,8 @@ def command_transcribe(args) -> None:
         export_to_obsidian(
             markdown_file=outputs["markdown"],
             obsidian_dir=obsidian_dir,
-            obsidian_subdir=obsidian_subdir
+            obsidian_subdir=obsidian_subdir,
+            monthly_folder=config.get("obsidian_monthly_folders", True)
         )
 
 
@@ -1140,7 +1146,8 @@ def command_reenrich(args) -> None:
         export_to_obsidian(
             markdown_file=markdown_file,
             obsidian_dir=obsidian_dir,
-            obsidian_subdir=obsidian_subdir
+            obsidian_subdir=obsidian_subdir,
+            monthly_folder=config.get("obsidian_monthly_folders", True)
         )
 
 
@@ -1194,7 +1201,8 @@ def command_run(args) -> None:
         export_to_obsidian(
             markdown_file=outputs["markdown"],
             obsidian_dir=obsidian_dir,
-            obsidian_subdir=obsidian_subdir
+            obsidian_subdir=obsidian_subdir,
+            monthly_folder=config.get("obsidian_monthly_folders", True)
         )
 
     if args.delete_audio:
