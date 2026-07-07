@@ -49,6 +49,9 @@ _job = {
     "silence_warning": False,
     "note": None,           # chemin de la note finale
     "title": None,          # titre Gemini éventuel
+    "paused": False,
+    "paused_since": None,
+    "paused_total": 0.0,
 }
 
 
@@ -66,6 +69,18 @@ def _reader_thread(process: subprocess.Popen) -> None:
             if "[OK] Audio généré" in line:
                 _job["phase"] = "processing"
                 _job["stopped_at"] = time.time()
+                if _job["paused_since"]:
+                    _job["paused_total"] += time.time() - _job["paused_since"]
+                _job["paused"] = False
+                _job["paused_since"] = None
+            elif "[INFO] Pause." in line:
+                _job["paused"] = True
+                _job["paused_since"] = time.time()
+            elif "[INFO] Reprise" in line:
+                if _job["paused_since"]:
+                    _job["paused_total"] += time.time() - _job["paused_since"]
+                _job["paused"] = False
+                _job["paused_since"] = None
             elif "[WARN] Aucun son détecté" in line:
                 _job["silence_warning"] = True
             elif "Titre proposé par Gemini :" in line:
@@ -222,11 +237,17 @@ def status():
             end = _job["stopped_at"] or time.time()
             elapsed = int(end - _job["started_at"])
 
+        pause_extra = _job["paused_total"]
+        if _job["paused_since"]:
+            pause_extra += time.time() - _job["paused_since"]
+
         payload = {
             "phase": _job["phase"],
+            "paused": _job["paused"],
             "elapsed_seconds": elapsed,
             "recording_seconds": (
-                int((_job["stopped_at"] or time.time()) - _job["started_at"])
+                max(int((_job["stopped_at"] or time.time())
+                        - _job["started_at"] - pause_extra), 0)
                 if _job["started_at"] else None
             ),
             "silence_warning": _job["silence_warning"],
@@ -251,6 +272,10 @@ def status():
 
 def _spawn_job(command: list[str], phase: str):
     """Lance app.py en sous-processus si aucun travail n'est en cours."""
+    # -u : sortie non bufferisée, pour que l'état (pause, fin d'audio...)
+    # remonte immédiatement dans le journal et le suivi de phase
+    command = [command[0], "-u", *command[1:]]
+
     with _lock:
         if _job["process"] is not None:
             return None
@@ -271,6 +296,9 @@ def _spawn_job(command: list[str], phase: str):
             "silence_warning": False,
             "note": None,
             "title": None,
+            "paused": False,
+            "paused_since": None,
+            "paused_total": 0.0,
         })
         _job["log"].clear()
 
@@ -323,6 +351,17 @@ def transcribe():
     command = [PYTHON, str(BASE_DIR / "app.py"), "transcribe", "--file", str(wav_file)]
     if _spawn_job(command, "processing") is None:
         return jsonify({"error": "Un travail est déjà en cours"}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/record/pause")
+def record_pause():
+    with _lock:
+        process = _job["process"]
+        if process is None or _job["phase"] != "recording":
+            return jsonify({"error": "Aucun enregistrement en cours"}), 409
+        # SIGUSR1 = bascule pause/reprise dans app.py
+        process.send_signal(signal.SIGUSR1)
     return jsonify({"ok": True})
 
 

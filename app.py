@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -489,6 +490,132 @@ def _is_probably_silent(wav_file: Path, threshold: int = 200) -> bool:
     return True
 
 
+def _escape_concat_path(path: Path) -> str:
+    return str(path).replace("'", "'\\''")
+
+
+def _assemble_parts(parts: list[Path], output_file: Path) -> None:
+    """Assemble les segments (pause/reprise) en un seul fichier WAV."""
+    parts = [p for p in parts if p.exists() and p.stat().st_size > 44]
+
+    if not parts:
+        raise RuntimeError("Le fichier audio généré est vide ou absent.")
+
+    if len(parts) == 1:
+        parts[0].rename(output_file)
+        return
+
+    list_file = output_file.with_suffix(".parts.txt")
+    list_file.write_text(
+        "".join(f"file '{_escape_concat_path(p)}'\n" for p in parts),
+        encoding="utf-8"
+    )
+
+    try:
+        run_command([
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_file),
+            "-c", "copy",
+            str(output_file)
+        ])
+    finally:
+        list_file.unlink(missing_ok=True)
+
+    for part in parts:
+        part.unlink()
+
+    print(f"[INFO] {len(parts)} segments assemblés.")
+
+
+def _record_with_pause(
+    source: str,
+    output_file: Path,
+    verbose: bool
+) -> int:
+    """Enregistrement manuel avec pause/reprise (SIGUSR1 ou CTRL+Z)."""
+    toggle = {"requested": False}
+
+    def _on_toggle(signum, frame):
+        toggle["requested"] = True
+
+    old_usr1 = signal.signal(signal.SIGUSR1, _on_toggle)
+    old_tstp = signal.signal(signal.SIGTSTP, _on_toggle)
+
+    parts: list[Path] = []
+    recorded_before = 0.0
+    paused = False
+    silence_checked = False
+
+    def start_part() -> subprocess.Popen:
+        part_file = CAPTURE_DIR / f"{output_file.stem}_part{len(parts) + 1}.wav"
+        parts.append(part_file)
+        return subprocess.Popen(
+            build_ffmpeg_command(source, part_file, None, verbose),
+            stdin=subprocess.PIPE,
+            text=True,
+            start_new_session=True
+        )
+
+    process = start_part()
+    part_start = time.time()
+
+    try:
+        while True:
+            time.sleep(0.5)
+
+            if toggle["requested"]:
+                toggle["requested"] = False
+                if paused:
+                    process = start_part()
+                    part_start = time.time()
+                    paused = False
+                    print("\n[INFO] Reprise de l'enregistrement.")
+                else:
+                    stop_ffmpeg_cleanly(process)
+                    recorded_before += time.time() - part_start
+                    paused = True
+                    print("\n[INFO] Pause. CTRL+Z (ou bouton ▶) pour reprendre.")
+
+            if paused:
+                print("\r⏸ En pause...            ", end="", flush=True)
+                continue
+
+            if process.poll() is not None:
+                break
+
+            recorded = int(recorded_before + time.time() - part_start)
+            print(
+                f"\r⏺ Enregistrement... {recorded // 60:02d}:{recorded % 60:02d}",
+                end="",
+                flush=True
+            )
+
+            if not silence_checked and recorded >= 12:
+                silence_checked = True
+                current = parts[-1]
+                if current.exists() and _is_probably_silent(current):
+                    print(
+                        "\n[WARN] Aucun son détecté depuis le début ! "
+                        "Vérifie que la vidéo/le podcast joue bien et que "
+                        "la bonne source audio est utilisée (app.py sources)."
+                    )
+        print()
+
+    except KeyboardInterrupt:
+        print()
+        if not paused:
+            stop_ffmpeg_cleanly(process)
+            recorded_before += time.time() - part_start
+
+    finally:
+        signal.signal(signal.SIGUSR1, old_usr1)
+        signal.signal(signal.SIGTSTP, old_tstp)
+
+    _assemble_parts(parts, output_file)
+    return int(recorded_before)
+
+
 def record_audio(
     name: str | None = None,
     duration: int | None = None,
@@ -509,54 +636,55 @@ def record_audio(
 
     if duration is None:
         print("[INFO] Durée : manuelle")
-        print("[INFO] Appuie sur CTRL+C une seule fois pour arrêter proprement.")
+        print("[INFO] CTRL+C : arrêter — CTRL+Z : pause/reprise.")
+        elapsed = _record_with_pause(source, output_file, verbose)
+
     else:
         print(f"[INFO] Durée : {duration} secondes")
 
-    command = build_ffmpeg_command(source, output_file, duration, verbose)
+        command = build_ffmpeg_command(source, output_file, duration, verbose)
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            text=True,
+            start_new_session=True
+        )
 
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        text=True,
-        start_new_session=True
-    )
+        start_time = time.time()
+        manual_stop = False
+        silence_checked = False
 
-    start_time = time.time()
-    manual_stop = False
-    silence_checked = False
+        try:
+            while process.poll() is None:
+                time.sleep(1)
+                elapsed = int(time.time() - start_time)
+                print(
+                    f"\r⏺ Enregistrement... {elapsed // 60:02d}:{elapsed % 60:02d}",
+                    end="",
+                    flush=True
+                )
 
-    try:
-        while process.poll() is None:
-            time.sleep(1)
-            elapsed = int(time.time() - start_time)
-            print(
-                f"\r⏺ Enregistrement... {elapsed // 60:02d}:{elapsed % 60:02d}",
-                end="",
-                flush=True
-            )
+                if not silence_checked and elapsed >= 12:
+                    silence_checked = True
+                    if output_file.exists() and _is_probably_silent(output_file):
+                        print(
+                            "\n[WARN] Aucun son détecté depuis le début ! "
+                            "Vérifie que la vidéo/le podcast joue bien et que "
+                            "la bonne source audio est utilisée (app.py sources)."
+                        )
+            print()
 
-            if not silence_checked and elapsed >= 12:
-                silence_checked = True
-                if output_file.exists() and _is_probably_silent(output_file):
-                    print(
-                        "\n[WARN] Aucun son détecté depuis le début ! "
-                        "Vérifie que la vidéo/le podcast joue bien et que "
-                        "la bonne source audio est utilisée (app.py sources)."
-                    )
-        print()
+        except KeyboardInterrupt:
+            manual_stop = True
+            print()
+            stop_ffmpeg_cleanly(process)
 
-    except KeyboardInterrupt:
-        manual_stop = True
-        print()
-        stop_ffmpeg_cleanly(process)
+        elapsed = int(time.time() - start_time)
+        return_code = process.returncode
 
-    elapsed = int(time.time() - start_time)
-    return_code = process.returncode
-
-    if return_code not in (0, None):
-        if not (manual_stop and return_code == 255):
-            print(f"[WARN] FFmpeg a terminé avec le code : {return_code}")
+        if return_code not in (0, None):
+            if not (manual_stop and return_code == 255):
+                print(f"[WARN] FFmpeg a terminé avec le code : {return_code}")
 
     if not output_file.exists() or output_file.stat().st_size == 0:
         raise RuntimeError("Le fichier audio généré est vide ou absent.")
