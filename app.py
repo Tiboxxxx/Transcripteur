@@ -135,13 +135,24 @@ def init_gemini(config: dict | None = None) -> bool:
         print(f"[WARN] Erreur configuration Gemini : {error}")
         return False
 
-def enrich_with_gemini(text: str, language: str = "fr") -> dict | None:
+DEFAULT_DOMAINS = [
+    "ia", "programmation", "cybersecurite", "reseau", "systeme",
+    "data", "business", "formation", "autre"
+]
+
+
+def enrich_with_gemini(
+    text: str,
+    language: str = "fr",
+    domains: list[str] | None = None
+) -> dict | None:
     global _gemini_client, _gemini_stats
 
     if not _gemini_client:
         return None
 
     _gemini_stats = load_gemini_stats()
+    domains = domains or DEFAULT_DOMAINS
 
     try:
         if language == "fr":
@@ -150,6 +161,9 @@ def enrich_with_gemini(text: str, language: str = "fr") -> dict | None:
 Fournis un JSON valide avec:
 {{
   "title": "Titre du cours",
+  "domain": "UN SEUL domaine parmi : {", ".join(domains)}",
+  "summary": "Résumé en 1 à 2 phrases",
+  "keywords": ["mot-clé 1", "mot-clé 2 (6 max, courts)"],
   "duration_minutes": estimation en minutes,
   "level": "débutant/intermédiaire/avancé",
   "course_structure": [
@@ -188,6 +202,9 @@ Transcription:
 Provide valid JSON with:
 {{
   "title": "Course Title",
+  "domain": "ONE domain among: {", ".join(domains)}",
+  "summary": "1-2 sentence summary",
+  "keywords": ["keyword 1", "keyword 2 (max 6, short)"],
   "duration_minutes": estimated minutes,
   "level": "beginner/intermediate/advanced",
   "course_structure": [
@@ -787,34 +804,28 @@ def export_markdown(
     segments: list[dict],
     gemini_enrichment: dict | None = None
 ) -> None:
+    duration_minutes = max(1, round(segments[-1]["end"] / 60)) if segments else 0
+
     with output_file.open("w", encoding="utf-8") as file:
+        # Frontmatter court et requêtable (Dataview) : pas de texte long,
+        # le titre est porté par le nom du fichier.
         file.write("---\n")
-        file.write("type: transcription_video\n")
-        file.write(f"date: {datetime.now().isoformat(timespec='seconds')}\n")
-        file.write(f"source_audio: {audio_file.name}\n")
-        file.write("moteur: faster-whisper\n")
-        file.write(f"modele: {model_size}\n")
-        file.write(f"engine: {engine}\n")
-        file.write(f"language: {language}\n")
-        file.write(f"language_detected: {detected_language}\n")
-        file.write(f"language_probability: {language_probability:.2f}\n")
-        file.write(f"segments: {len(segments)}\n")
+        file.write("type: transcription\n")
+        file.write(f"date: {datetime.now().strftime('%Y-%m-%d')}\n")
+        file.write(f"language: {detected_language}\n")
+        file.write(f"duration_minutes: {duration_minutes}\n")
 
         if gemini_enrichment:
-            if gemini_enrichment.get("summary"):
-                file.write(f"summary: {json.dumps(gemini_enrichment['summary'], ensure_ascii=False)}\n")
-            if gemini_enrichment.get("title"):
-                file.write(f"course_title: {json.dumps(gemini_enrichment['title'], ensure_ascii=False)}\n")
+            if gemini_enrichment.get("domain"):
+                file.write(f"domain: {gemini_enrichment['domain']}\n")
             if gemini_enrichment.get("level"):
                 file.write(f"level: {gemini_enrichment['level']}\n")
             if gemini_enrichment.get("keywords"):
-                file.write(f"keywords: {', '.join(gemini_enrichment['keywords'])}\n")
-            if gemini_enrichment.get("topics"):
-                file.write(f"topics: {', '.join(gemini_enrichment['topics'])}\n")
-            if gemini_enrichment.get("sentiment"):
-                file.write(f"sentiment: {gemini_enrichment['sentiment']}\n")
-            if gemini_enrichment.get("quality_score"):
-                file.write(f"quality_score: {gemini_enrichment['quality_score']}\n")
+                file.write("keywords:\n")
+                for keyword in gemini_enrichment["keywords"][:6]:
+                    file.write(f"  - {keyword}\n")
+            if gemini_enrichment.get("summary"):
+                file.write(f"summary: {json.dumps(gemini_enrichment['summary'], ensure_ascii=False)}\n")
             file.write(
                 f"enriched_by: "
                 f"{gemini_enrichment.get('_model_used', GEMINI_MODEL.removeprefix('models/'))}\n"
@@ -822,8 +833,12 @@ def export_markdown(
 
         file.write("---\n\n")
 
-        file.write(f"# Transcription - {name}\n\n")
-        file.write(f"Langue détectée : `{detected_language}`\n\n")
+        heading = (
+            gemini_enrichment.get("title")
+            if gemini_enrichment and gemini_enrichment.get("title")
+            else name.replace("_", " ")
+        )
+        file.write(f"# {heading}\n\n")
 
         if gemini_enrichment:
             # Afficher la structure de cours si présente
@@ -894,13 +909,8 @@ def export_markdown(
             if parts:
                 file.write(" ".join(parts) + "\n\n")
 
-        file.write("## Transcription horodatée\n\n")
-
-        for segment in segments:
-            file.write(
-                f"[{segment['start']:.2f} - {segment['end']:.2f}] "
-                f"{segment['text']}\n\n"
-            )
+        # La transcription horodatée n'est plus incluse dans la note :
+        # les segments restent disponibles dans l'export JSON.
 
 
 def export_txt(output_file: Path, name: str, segments: list[dict]) -> None:
@@ -1014,7 +1024,11 @@ def transcribe_audio(
         print("[INFO] Enrichissement Gemini en cours...")
         if init_gemini(config):
             full_text = " ".join([s["text"] for s in segments])
-            gemini_enrichment = enrich_with_gemini(full_text, language=language)
+            gemini_enrichment = enrich_with_gemini(
+                full_text,
+                language=language,
+                domains=config.get("domains") if config else None
+            )
             if gemini_enrichment:
                 print(f"[OK] Enrichissement Gemini complété")
             else:
@@ -1136,7 +1150,6 @@ def export_to_obsidian(
 
 def enrich_markdown_for_obsidian(
     markdown_file: Path,
-    title: str | None = None,
     domain: str | None = None
 ) -> None:
     if not markdown_file.exists():
@@ -1159,19 +1172,23 @@ def enrich_markdown_for_obsidian(
     body = content[end_index + 4:]
 
     existing_keys = set()
+    frontmatter_domain = None
 
     for line in frontmatter.splitlines():
         if ":" in line and not line.startswith(" "):
-            key = line.split(":", 1)[0].strip()
+            key, _, value = line.partition(":")
+            key = key.strip()
             existing_keys.add(key)
+            if key == "domain":
+                frontmatter_domain = value.strip() or None
 
     additions = []
 
-    if title and "title" not in existing_keys:
-        additions.append(f'title: "{title}"')
-
     if domain and "domain" not in existing_keys:
         additions.append(f"domain: {domain}")
+
+    # Domaine effectif pour les tags : argument CLI sinon classement Gemini
+    domain = domain or frontmatter_domain
 
     if "tags" not in existing_keys:
         tags = ["transcription"]
@@ -1236,7 +1253,6 @@ def command_transcribe(args) -> None:
 
     enrich_markdown_for_obsidian(
         markdown_file=outputs["markdown"],
-        title=title,
         domain=args.domain
     )
 
@@ -1266,7 +1282,11 @@ def command_reenrich(args) -> None:
 
     print(f"[INFO] Ré-enrichissement de « {name} » ({len(segments)} segments)...")
     full_text = " ".join(s["text"] for s in segments)
-    enrichment = enrich_with_gemini(full_text, language=language)
+    enrichment = enrich_with_gemini(
+        full_text,
+        language=language,
+        domains=config.get("domains")
+    )
 
     if not enrichment:
         raise RuntimeError("Échec de l'enrichissement Gemini.")
@@ -1309,7 +1329,6 @@ def command_reenrich(args) -> None:
 
     enrich_markdown_for_obsidian(
         markdown_file=markdown_file,
-        title=title,
         domain=args.domain
     )
 
@@ -1374,7 +1393,6 @@ def command_run(args) -> None:
 
     enrich_markdown_for_obsidian(
         markdown_file=outputs["markdown"],
-        title=title,
         domain=args.domain
     )
 

@@ -90,6 +90,11 @@ cp config.example.json config.json    # puis éditer (voir Configuration)
 
 - `default_model` : `tiny` | `base` | `small` | `medium` —
   `default_device` : `auto` | `cuda` | `cpu`.
+- `domains` (optionnel) : liste des domaines que Gemini peut attribuer aux
+  notes (défaut : ia, programmation, cybersecurite, reseau, systeme, data,
+  business, formation, autre). Le domaine choisi alimente `domain:` et les
+  tags du frontmatter — exploitable avec Dataview :
+  `TABLE duration_minutes, level FROM #transcription WHERE domain = "ia"`.
 - **Clé Gemini** : gratuite sur [Google AI Studio](https://aistudio.google.com/apikey).
   Préférer la variable d'environnement `GEMINI_API_KEY` (prioritaire sur le
   fichier). ⚠️ `config.json` est exclu de git — ne jamais y committer la clé.
@@ -106,7 +111,7 @@ cp config.example.json config.json    # puis éditer (voir Configuration)
 | Fichier | Emplacement |
 |---|---|
 | Audio brut `.wav` | `captures/` (sauf `--delete-audio`) |
-| Note Markdown enrichie | `transcriptions/markdown/` + copie dans le vault, classée par mois (`00_INBOX/2026-07/…`) |
+| Note Markdown enrichie | `transcriptions/markdown/` + copie dans le vault, classée par mois (`00_INBOX/2026-07/…`). Frontmatter court pour Dataview (domain, keywords, duration_minutes…), corps = structure du cours + transcription nettoyée (les timestamps restent dans le JSON) |
 | Texte brut `.txt` | `transcriptions/txt/` |
 | Export `.json` (segments horodatés) | `transcriptions/json/` — sert au ré-enrichissement |
 | Suivi du quota Gemini | `logs/gemini_stats.json` (reset mensuel automatique) |
